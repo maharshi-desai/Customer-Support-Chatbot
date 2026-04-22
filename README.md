@@ -97,7 +97,15 @@ By default, the frontend sends requests to:
 http://localhost:5678/webhook/support-query
 ```
 
-This is configured in [src/components/Chat.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Chat.jsx).
+In local development, this is configured in [src/components/Chat.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Chat.jsx).
+
+In production, the frontend sends requests to:
+
+```txt
+/api/support-query
+```
+
+That Vercel serverless route forwards the request to your public n8n webhook using the `N8N_SUPPORT_WEBHOOK_URL` server environment variable.
 
 You can override it with:
 
@@ -110,6 +118,63 @@ Create a `.env` file in the project root if you want to change the webhook witho
 ```bash
 VITE_SUPPORT_WEBHOOK_URL=http://localhost:5678/webhook/support-query
 ```
+
+## Deployment On Vercel
+
+This repo includes a Vercel serverless proxy at [api/support-query.js](/Users/apple/Desktop/Agentic-Customer-Support/api/support-query.js) so the browser does not call n8n directly.
+
+Why this matters:
+
+- the browser avoids CORS issues
+- your frontend does not need to expose the raw webhook URL
+- Vercel calls n8n server-to-server
+
+### What you still need
+
+Your n8n webhook must be reachable from the public internet. A browser on another laptop cannot use `http://localhost:5678/...` because `localhost` always means that person’s own machine.
+
+You have two options:
+
+- deploy n8n publicly
+- expose your local n8n temporarily with a tunnel such as `ngrok` or `cloudflared`
+
+### Vercel setup steps
+
+1. Make sure your n8n production webhook works from a public URL.
+2. In Vercel, open your project settings.
+3. Go to `Environment Variables`.
+4. Add:
+
+```bash
+N8N_SUPPORT_WEBHOOK_URL=https://your-public-n8n-url/webhook/support-query
+```
+
+5. Redeploy the project.
+6. Open the deployed site and test the chat again.
+
+### Temporary demo setup with a tunnel
+
+If your n8n is still running only on your laptop, expose it first.
+
+Using `cloudflared`:
+
+```bash
+cloudflared tunnel --url http://localhost:5678
+```
+
+or using `ngrok`:
+
+```bash
+ngrok http 5678
+```
+
+Then take the generated public URL and use:
+
+```bash
+https://your-public-url/webhook/support-query
+```
+
+as the value of `N8N_SUPPORT_WEBHOOK_URL` in Vercel.
 
 ## Request Payload Sent To n8n
 

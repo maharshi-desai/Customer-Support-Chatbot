@@ -19,7 +19,9 @@ const normalizeValue = (value, fallback) =>
 
 const SUPPORT_WEBHOOK_URL =
   import.meta.env.VITE_SUPPORT_WEBHOOK_URL ||
-  "http://localhost:5678/webhook/support-query";
+  (import.meta.env.DEV
+    ? "http://localhost:5678/webhook/support-query"
+    : "/api/support-query");
 
 const getReplyText = (data) => {
   if (typeof data === "string" && data.trim()) {
