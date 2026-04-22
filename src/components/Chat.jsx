@@ -17,6 +17,94 @@ const normalizeValue = (value, fallback) =>
     ? value.trim().toLowerCase()
     : fallback;
 
+const SUPPORT_WEBHOOK_URL =
+  import.meta.env.VITE_SUPPORT_WEBHOOK_URL ||
+  "http://localhost:5678/webhook/support-query";
+
+const getReplyText = (data) => {
+  if (typeof data === "string" && data.trim()) {
+    return data;
+  }
+
+  if (typeof data?.reply === "string" && data.reply.trim()) {
+    return data.reply;
+  }
+
+  if (typeof data?.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+
+  if (typeof data?.output === "string" && data.output.trim()) {
+    return data.output;
+  }
+
+  return "I'm here to help, but I didn't receive a response.";
+};
+
+const inferEscalation = (data, replyText) => {
+  if (typeof data?.escalated === "boolean") {
+    return data.escalated;
+  }
+
+  if (typeof data?.escalate === "boolean") {
+    return data.escalate;
+  }
+
+  const normalizedReply = typeof replyText === "string" ? replyText.toLowerCase() : "";
+
+  return (
+    normalizedReply.includes("escalated to a human") ||
+    normalizedReply.includes("escalated to human") ||
+    normalizedReply.includes("human agent") ||
+    normalizedReply.includes("transferred to an agent")
+  );
+};
+
+const inferSentiment = (data, replyText, escalated) => {
+  const rawSentiment =
+    typeof data?.sentiment === "string" && data.sentiment.trim()
+      ? data.sentiment.trim().toLowerCase()
+      : "";
+
+  if (rawSentiment) {
+    if (escalated && rawSentiment === "neutral") {
+      return "negative";
+    }
+
+    return rawSentiment;
+  }
+
+  const normalizedReply = typeof replyText === "string" ? replyText.toLowerCase() : "";
+
+  if (
+    escalated ||
+    normalizedReply.includes("failed") ||
+    normalizedReply.includes("frustrated") ||
+    normalizedReply.includes("issue") ||
+    normalizedReply.includes("problem")
+  ) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
+const parseWebhookResponse = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+
+  const text = await response.text();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
 const domainOptions = [
   { value: "orders", label: "📦 Orders", icon: Package },
   { value: "returns-refunds", label: "🔁 Returns & Refunds", icon: RotateCcw },
@@ -25,7 +113,7 @@ const domainOptions = [
   { value: "general", label: "💬 General", icon: LayoutGrid },
 ];
 
-function Chat({ messages, setMessages, createTimestamp }) {
+function Chat({ messages, appendMessage, createTimestamp }) {
   const [inputValue, setInputValue] = useState("");
   const [domain, setDomain] = useState("general");
   const [isLoading, setIsLoading] = useState(false);
@@ -52,51 +140,80 @@ function Chat({ messages, setMessages, createTimestamp }) {
       domain,
     };
 
-    setMessages((previousMessages) => [...previousMessages, userMessage]);
+    appendMessage(userMessage);
     setInputValue("");
     setIsLoading(true);
 
     try {
-      const response = await fetch("/webhook/chat", {
+      const requestPayload = {
+        message: trimmedMessage,
+        query: trimmedMessage,
+        text: trimmedMessage,
+        chatInput: trimmedMessage,
+        domain,
+        category: domain,
+        source: "dashboard",
+        messages: [...messages, userMessage].map((message) => ({
+          sender: message.sender,
+          text: message.text,
+          timestamp: message.timestamp,
+          domain: message.domain,
+          category: message.category,
+        })),
+      };
+
+      const response = await fetch(SUPPORT_WEBHOOK_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          message: trimmedMessage,
-          domain,
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
+      const data = await parseWebhookResponse(response);
+
       if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
+        const details =
+          typeof data === "string"
+            ? data
+            : data?.message || data?.error || data?.hint || "";
+
+        throw new Error(
+          details
+            ? `Request failed with status ${response.status}: ${details}`
+            : `Request failed with status ${response.status}`,
+        );
       }
 
-      const data = await response.json();
+      const replyText = getReplyText(data);
+      const escalated = inferEscalation(data, replyText);
 
       const botMessage = {
         id: crypto.randomUUID(),
         sender: "bot",
-        text: data.reply || "I'm here to help, but I didn't receive a response.",
+        text: replyText,
         timestamp: createTimestamp(),
-        category: normalizeValue(data.category, "general"),
-        sentiment: normalizeValue(data.sentiment, "neutral"),
-        escalated: Boolean(data.escalated),
+        category: normalizeValue(data.category || data.domain, "general"),
+        sentiment: inferSentiment(data, replyText, escalated),
+        escalated,
       };
 
-      setMessages((previousMessages) => [...previousMessages, botMessage]);
+      appendMessage(botMessage);
     } catch (error) {
       const errorMessage = {
         id: crypto.randomUUID(),
         sender: "bot",
-        text: "Something went wrong while contacting support AI. Please try again in a moment.",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong while contacting support AI. Please try again in a moment.",
         timestamp: createTimestamp(),
         category: "general",
         sentiment: "negative",
         escalated: true,
       };
 
-      setMessages((previousMessages) => [...previousMessages, errorMessage]);
+      appendMessage(errorMessage);
       console.error("Chat request failed:", error);
     } finally {
       setIsLoading(false);

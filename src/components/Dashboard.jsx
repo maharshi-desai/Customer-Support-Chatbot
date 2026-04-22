@@ -28,7 +28,7 @@ function Dashboard({ messages }) {
       title: "Total Messages",
       value: messages.length,
       icon: MessageSquare,
-      description: "Conversation turns captured across the chat session.",
+      description: "Conversation turns captured across saved analytics history.",
     },
     {
       title: "Escalated Cases",
@@ -72,8 +72,8 @@ function Dashboard({ messages }) {
           <p className="section-kicker">Analytics Overview</p>
           <h1>Conversation insights dashboard</h1>
           <p className="dashboard-copy">
-            Track message volume, escalation trends, and support distribution as the
-            assistant replies to customers.
+            Track message volume, escalation trends, and support distribution across
+            customer conversations, even after a fresh chat session starts.
           </p>
         </div>
 

@@ -35,49 +35,161 @@ const initialMessages = [
   },
 ];
 
-const STORAGE_KEY = "agentic-customer-support-messages";
+const LEGACY_STORAGE_KEY = "agentic-customer-support-messages";
+const SESSION_STORAGE_KEY = "agentic-customer-support-session-messages";
+const ANALYTICS_STORAGE_KEY = "agentic-customer-support-analytics-messages";
 
-function getStoredMessages() {
+const inferEscalation = (message) => {
+  if (typeof message?.escalated === "boolean") {
+    return message.escalated;
+  }
+
+  const text = typeof message?.text === "string" ? message.text.toLowerCase() : "";
+
+  return (
+    text.includes("escalated to a human") ||
+    text.includes("escalated to human") ||
+    text.includes("human agent") ||
+    text.includes("transferred to an agent")
+  );
+};
+
+const inferSentiment = (message, escalated) => {
+  if (typeof message?.sentiment === "string" && message.sentiment.trim()) {
+    const normalizedSentiment = message.sentiment.trim().toLowerCase();
+
+    if (escalated && normalizedSentiment === "neutral") {
+      return "negative";
+    }
+
+    return normalizedSentiment;
+  }
+
+  const text = typeof message?.text === "string" ? message.text.toLowerCase() : "";
+
+  if (
+    escalated ||
+    text.includes("failed") ||
+    text.includes("frustrated") ||
+    text.includes("issue") ||
+    text.includes("problem")
+  ) {
+    return "negative";
+  }
+
+  return "neutral";
+};
+
+const normalizeMessage = (message, index = -1) => {
+  const escalated = inferEscalation(message);
+
+  const normalizedMessage = {
+    ...message,
+    escalated,
+    sentiment: inferSentiment(message, escalated),
+  };
+
+  if (
+    index === 0 &&
+    message?.sender === "bot" &&
+    message?.text === OLD_WELCOME_MESSAGE
+  ) {
+    return {
+      ...normalizedMessage,
+      text: NEW_WELCOME_MESSAGE,
+    };
+  }
+
+  return normalizedMessage;
+};
+
+const isTrackableMessage = (message) =>
+  !(
+    message?.sender === "bot" &&
+    typeof message?.text === "string" &&
+    message.text.trim() === NEW_WELCOME_MESSAGE.trim()
+  );
+
+function readStoredMessages(storage, key) {
   if (typeof window === "undefined") {
-    return initialMessages;
+    return [];
   }
 
   try {
-    const storedMessages = window.localStorage.getItem(STORAGE_KEY);
+    const storedMessages = storage.getItem(key);
 
     if (!storedMessages) {
-      return initialMessages;
+      return [];
     }
 
     const parsedMessages = JSON.parse(storedMessages);
 
     if (!Array.isArray(parsedMessages) || parsedMessages.length === 0) {
-      return initialMessages;
+      return [];
     }
 
-    return parsedMessages.map((message, index) => {
-      if (index === 0 && message?.sender === "bot" && message?.text === OLD_WELCOME_MESSAGE) {
-        return {
-          ...message,
-          text: NEW_WELCOME_MESSAGE,
-        };
-      }
-
-      return message;
-    });
+    return parsedMessages.map((message, index) => normalizeMessage(message, index));
   } catch (error) {
     console.error("Failed to read saved messages:", error);
-    return initialMessages;
+    return [];
   }
 }
 
+function getSessionMessages() {
+  if (typeof window === "undefined") {
+    return initialMessages;
+  }
+
+  const sessionMessages = readStoredMessages(window.sessionStorage, SESSION_STORAGE_KEY);
+  return sessionMessages.length > 0 ? sessionMessages : initialMessages;
+}
+
+function getAnalyticsMessages() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const storedAnalytics = readStoredMessages(window.localStorage, ANALYTICS_STORAGE_KEY);
+
+  if (storedAnalytics.length > 0) {
+    return storedAnalytics.filter(isTrackableMessage);
+  }
+
+  const legacyMessages = readStoredMessages(window.localStorage, LEGACY_STORAGE_KEY);
+  return legacyMessages.filter(isTrackableMessage);
+}
+
 function App() {
-  // Store conversation history once so both screens stay in sync.
-  const [messages, setMessages] = useState(getStoredMessages);
+  const [messages, setMessages] = useState(getSessionMessages);
+  const [analyticsMessages, setAnalyticsMessages] = useState(getAnalyticsMessages);
+
+  const appendMessage = (message, options = {}) => {
+    const { trackAnalytics = true } = options;
+    const normalizedMessage = normalizeMessage(message);
+
+    setMessages((previousMessages) => [...previousMessages, normalizedMessage]);
+
+    if (trackAnalytics && isTrackableMessage(normalizedMessage)) {
+      setAnalyticsMessages((previousMessages) => [...previousMessages, normalizedMessage]);
+    }
+  };
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(messages));
   }, [messages]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      ANALYTICS_STORAGE_KEY,
+      JSON.stringify(analyticsMessages),
+    );
+  }, [analyticsMessages]);
+
+  useEffect(() => {
+    if (window.localStorage.getItem(LEGACY_STORAGE_KEY)) {
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
+  }, []);
 
   return (
     <div className="app-shell">
@@ -94,12 +206,15 @@ function App() {
               element={
                 <Chat
                   messages={messages}
-                  setMessages={setMessages}
+                  appendMessage={appendMessage}
                   createTimestamp={createTimestamp}
                 />
               }
             />
-            <Route path="/dashboard" element={<Dashboard messages={messages} />} />
+            <Route
+              path="/dashboard"
+              element={<Dashboard messages={analyticsMessages} />}
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
