@@ -1,184 +1,35 @@
 # Agentic Customer Support System
 
-A React + Vite customer support dashboard that connects a chat UI to an n8n webhook and visualizes support analytics in a separate dashboard view.
+A React + Vite e-commerce support dashboard with a built-in serverless backend at [api/support-query.js](/Users/apple/Desktop/Agentic-Customer-Support/api/support-query.js).
 
-The project is designed for an e-commerce support use case. Users can ask questions about orders, refunds, payments, and account issues, while the dashboard tracks message volume, sentiment, escalation trends, and support categories.
+The backend now combines:
 
-## What This Project Does
+- a local FAQ knowledge base with 30 e-commerce questions and answers
+- rule-based category, sentiment, and escalation detection
+- Hugging Face chat completion for reply generation when `HF_TOKEN` is configured
+- a deterministic fallback reply when Hugging Face is unavailable
 
-- Provides a clean customer support chat interface
-- Sends user queries to an n8n production webhook
-- Renders the webhook response back into the chat
-- Tracks sentiment, categories, and escalation state for bot replies
-- Shows aggregated conversation insights on a dashboard
-- Keeps chat history for the current browser session
-- Keeps dashboard analytics across visits using persistent browser storage
+## What The App Does
+
+- provides an e-commerce support chat UI
+- supports orders, returns, payments, account, and general queries
+- sends chat requests to `/api/support-query`
+- returns `reply`, `category`, `sentiment`, and `escalated`
+- stores chat session history separately from analytics history
+- shows dashboard analytics for support activity
 
 ## Tech Stack
 
 - React 18
 - Vite 5
 - React Router
-- Lucide React icons
-- n8n webhook integration
+- Lucide React
+- Vercel-style serverless API route
+- Hugging Face Inference Providers via direct HTTP
 
-## App Flow
+## Backend Behavior
 
-1. A user opens the chat UI.
-2. The user sends a support message.
-3. The frontend sends a `POST` request to the configured n8n webhook.
-4. n8n processes the request and returns a support reply plus metadata.
-5. The frontend normalizes the response and displays:
-   - reply text
-   - category
-   - sentiment
-   - escalation state
-6. Bot replies are also added to the analytics dataset shown in the dashboard.
-
-## Pages
-
-### Chat
-
-The chat page is the main support assistant interface.
-
-- Route: `/`
-- Component: [src/components/Chat.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Chat.jsx)
-
-Features:
-
-- domain selector for support type
-- chat bubbles for user and assistant messages
-- loading indicator while the webhook request is in progress
-- defensive parsing for different webhook response shapes
-- fallback escalation and sentiment inference when n8n omits metadata
-
-### Dashboard
-
-The dashboard page summarizes support activity.
-
-- Route: `/dashboard`
-- Component: [src/components/Dashboard.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Dashboard.jsx)
-
-Metrics shown:
-
-- total messages
-- escalated cases
-- positive sentiment count
-- technical case count
-- sentiment breakdown
-- category breakdown
-
-## Storage Behavior
-
-The project intentionally separates chat session state from analytics state.
-
-### Chat history
-
-Chat history is stored in `sessionStorage`.
-
-- It stays when the user refreshes the page
-- It resets when a new browser session starts
-
-### Dashboard analytics
-
-Dashboard analytics are stored in `localStorage`.
-
-- They persist across page reloads
-- They persist across reopened browser sessions
-- They continue to accumulate until local storage is cleared
-
-This behavior is managed in [src/App.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/App.jsx).
-
-## Webhook Configuration
-
-By default, the frontend sends requests to:
-
-```txt
-http://localhost:5678/webhook/support-query
-```
-
-In local development, this is configured in [src/components/Chat.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Chat.jsx).
-
-In production, the frontend sends requests to:
-
-```txt
-/api/support-query
-```
-
-That Vercel serverless route forwards the request to your public n8n webhook using the `N8N_SUPPORT_WEBHOOK_URL` server environment variable.
-
-You can override it with:
-
-```bash
-VITE_SUPPORT_WEBHOOK_URL=http://localhost:5678/webhook/support-query
-```
-
-Create a `.env` file in the project root if you want to change the webhook without editing code:
-
-```bash
-VITE_SUPPORT_WEBHOOK_URL=http://localhost:5678/webhook/support-query
-```
-
-## Deployment On Vercel
-
-This repo includes a Vercel serverless proxy at [api/support-query.js](/Users/apple/Desktop/Agentic-Customer-Support/api/support-query.js) so the browser does not call n8n directly.
-
-Why this matters:
-
-- the browser avoids CORS issues
-- your frontend does not need to expose the raw webhook URL
-- Vercel calls n8n server-to-server
-
-### What you still need
-
-Your n8n webhook must be reachable from the public internet. A browser on another laptop cannot use `http://localhost:5678/...` because `localhost` always means that person’s own machine.
-
-You have two options:
-
-- deploy n8n publicly
-- expose your local n8n temporarily with a tunnel such as `ngrok` or `cloudflared`
-
-### Vercel setup steps
-
-1. Make sure your n8n production webhook works from a public URL.
-2. In Vercel, open your project settings.
-3. Go to `Environment Variables`.
-4. Add:
-
-```bash
-N8N_SUPPORT_WEBHOOK_URL=https://your-public-n8n-url/webhook/support-query
-```
-
-5. Redeploy the project.
-6. Open the deployed site and test the chat again.
-
-### Temporary demo setup with a tunnel
-
-If your n8n is still running only on your laptop, expose it first.
-
-Using `cloudflared`:
-
-```bash
-cloudflared tunnel --url http://localhost:5678
-```
-
-or using `ngrok`:
-
-```bash
-ngrok http 5678
-```
-
-Then take the generated public URL and use:
-
-```bash
-https://your-public-url/webhook/support-query
-```
-
-as the value of `N8N_SUPPORT_WEBHOOK_URL` in Vercel.
-
-## Request Payload Sent To n8n
-
-The frontend sends a JSON body similar to:
+The frontend sends a `POST` request to `/api/support-query` with a JSON payload similar to:
 
 ```json
 {
@@ -200,51 +51,57 @@ The frontend sends a JSON body similar to:
 }
 ```
 
-The frontend includes multiple text keys because n8n workflows often vary in how they read input fields.
-
-## Expected Response Shape From n8n
-
-The best response format is:
+The API responds with:
 
 ```json
 {
-  "reply": "Please try again or use a different payment method. Contact support if issue persists",
+  "reply": "Please share what happened during checkout and whether you saw an error or duplicate charge.",
   "category": "payments",
   "sentiment": "negative",
-  "escalated": false
+  "escalated": true
 }
 ```
 
-The frontend can also handle looser responses such as:
+Extra fields such as `provider` or `warning` may also be included for debugging, but the frontend only depends on:
 
-- a plain string
-- `{ "message": "..." }`
-- `{ "output": "..." }`
-- `{ "escalate": true }`
+- `reply`
+- `category`
+- `sentiment`
+- `escalated`
 
-If `escalated` or `sentiment` are missing, the frontend applies fallbacks based on the reply text.
+## FAQ Layer
 
-## n8n Workflow Notes
+The backend now checks a local FAQ dataset first for common e-commerce questions. This includes 30 built-in entries covering:
 
-This project was built around an n8n `Webhook` node using a `Respond to Webhook` node.
+- order tracking, delays, cancellations, shipping, and preorders
+- return windows, refund timelines, exchanges, and damaged items
+- payment methods, failed payments, duplicate charges, invoices, and gift cards
+- password reset, locked accounts, guest checkout, account creation, and email updates
 
-Recommended setup:
+If a FAQ match is found, the backend returns that answer directly before using Hugging Face or the generic fallback response.
 
-- `Webhook` method: `POST`
-- `Webhook` path: `support-query`
-- `Webhook` response mode: `Using Respond to Webhook Node`
-- exactly one active response path should end in `Respond to Webhook`
+## Environment Setup
 
-Recommended response object from n8n:
+This repo includes:
 
-```json
-{
-  "reply": "Your support response here",
-  "category": "general",
-  "sentiment": "neutral",
-  "escalated": false
-}
+- [.env.example](/Users/apple/Desktop/Agentic-Customer-Support/.env.example)
+- [.env.local](/Users/apple/Desktop/Agentic-Customer-Support/.env.local)
+
+Relevant environment variables:
+
+```bash
+VITE_SUPPORT_API_URL=/api/support-query
+HF_TOKEN=hf_your_token_here
+HF_MODEL=Qwen/Qwen2.5-7B-Instruct:fastest
 ```
+
+Vercel project config is included in [vercel.json](/Users/apple/Desktop/Agentic-Customer-Support/vercel.json).
+
+Notes:
+
+- `HF_TOKEN` is optional in code, but required if you want AI-generated replies from Hugging Face.
+- if `HF_TOKEN` is missing or the Hugging Face request fails, the backend falls back to rule-based support replies
+- `HF_MODEL` defaults to `Qwen/Qwen2.5-7B-Instruct:fastest`
 
 ## Local Development
 
@@ -254,7 +111,7 @@ Install dependencies:
 npm install
 ```
 
-Start the Vite dev server:
+Run the frontend build tooling:
 
 ```bash
 npm run dev
@@ -266,11 +123,69 @@ Build for production:
 npm run build
 ```
 
-Preview the production build:
+Important:
+
+- `npm run dev` runs the Vite frontend
+- the `api/` route is a serverless function, so if you want to exercise `/api/support-query` locally as an actual function, use your deployment platform's local dev flow
+- on Vercel, that means running the app through Vercel's local environment with your env vars configured
+
+## Vercel Deployment
+
+This project now includes a Vercel config that:
+
+- declares the `vite` framework
+- uses `dist` as the output directory
+- sets a 20-second max duration for `api/support-query.js`
+
+For deployment:
+
+1. Import the repo into Vercel.
+2. Add `HF_TOKEN` in the Vercel project environment variables.
+3. Optionally add `HF_MODEL` if you want to override the default model.
+4. Deploy.
+
+If `HF_TOKEN` is missing in Vercel, the app will still work using the rule-based fallback responses.
+
+## Recommended Hugging Face Model
+
+This project is set up to use:
 
 ```bash
-npm run preview
+Qwen/Qwen2.5-7B-Instruct:fastest
 ```
+
+This is a good fit because it follows instructions well and is a practical choice for short customer support replies.
+
+## How The Backend Decides Things
+
+### Rule-based logic
+
+The serverless route uses deterministic logic to:
+
+- infer support category
+- detect escalation triggers
+- infer basic sentiment
+
+Examples of escalation triggers:
+
+- fraud
+- unauthorized charge
+- charged twice
+- hacked account
+- locked account access
+
+Examples of smarter fallback handling:
+
+- tracking and delayed orders
+- refund status and return setup
+- duplicate or unauthorized charges
+- password reset and locked account access
+
+### Hugging Face generation
+
+When `HF_TOKEN` is present, the backend sends a chat completion request to Hugging Face and asks the model to generate a concise plain-text support reply.
+
+If the Hugging Face request fails, the route still returns a safe fallback response so the UI keeps working.
 
 ## Project Structure
 
@@ -285,79 +200,50 @@ src/
   App.jsx
   main.jsx
   styles.css
+api/
+  support-query.js
+.env.example
+.env.local
 vite.config.js
 package.json
 ```
 
-## Important Components
-
-### [src/App.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/App.jsx)
-
-- owns shared app state
-- separates session chat storage from persistent analytics storage
-- routes between chat and dashboard
-- normalizes legacy and live messages
+## Important Files
 
 ### [src/components/Chat.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Chat.jsx)
 
-- handles webhook submission
-- builds request payload
-- parses webhook responses
-- infers missing escalation and sentiment metadata
+- sends requests to `/api/support-query`
+- builds the support payload
+- parses flexible backend responses
+- keeps the frontend API contract simple
 
-### [src/components/Dashboard.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/Dashboard.jsx)
+### [api/support-query.js](/Users/apple/Desktop/Agentic-Customer-Support/api/support-query.js)
 
-- computes summary metrics from persistent analytics messages
-- renders sentiment and category breakdowns
+- checks the local FAQ dataset first
+- runs rule-based support classification
+- calls Hugging Face when configured
+- falls back to deterministic replies when needed
+- returns the response shape expected by the frontend
 
-### [src/components/MessageBubble.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/components/MessageBubble.jsx)
+### [data/faqs.js](/Users/apple/Desktop/Agentic-Customer-Support/data/faqs.js)
 
-- displays chat messages
-- shows category, sentiment, and escalation badges
+- contains 30 built-in FAQ entries
+- groups answers by orders, returns, payments, account, and general support
 
-## Troubleshooting
+### [src/App.jsx](/Users/apple/Desktop/Agentic-Customer-Support/src/App.jsx)
 
-### `Unused Respond to Webhook node found in the workflow`
+- manages chat session storage
+- manages dashboard analytics persistence
+- routes between chat and dashboard
 
-This means the n8n webhook configuration is inconsistent.
+## Next Improvements
 
-Check that:
-
-- the `Webhook` node is set to respond using `Respond to Webhook`
-- the active execution path actually reaches the `Respond to Webhook` node
-- the workflow is saved and activated after making changes
-
-### The app still uses an old n8n workflow
-
-If the frontend calls `/webhook/support-query`, n8n uses the active production workflow, not the draft currently open in the editor.
-
-After workflow changes:
-
-1. Save the workflow
-2. Re-activate it
-3. Test the production webhook again
-
-### FAQ answers are inconsistent
-
-If n8n uses an LLM to search FAQs, answers may vary. For deterministic FAQ behavior, prefer a `Code` node with explicit pattern matching over a free-form LLM response.
-
-### Sentiment looks wrong for escalated responses
-
-If n8n does not return a `sentiment` field, the frontend applies a fallback. For best results, return `sentiment` explicitly from n8n.
-
-## Future Improvements
-
-- align n8n categories with UI domain values:
-  - `orders`
-  - `returns-refunds`
-  - `payments`
-  - `account`
-  - `general`
-- move analytics persistence to a backend or database
-- add clear analytics reset controls
-- add automated tests for webhook response normalization
-- add authentication for internal dashboard usage
+- store conversations in a real database
+- add admin authentication
+- connect real order and payment systems
+- add ticket creation for escalated cases
+- add tests for backend classification rules
 
 ## License
 
-This project currently has no explicit license file in the repository.
+This repository currently has no explicit license file.

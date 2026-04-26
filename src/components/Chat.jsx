@@ -17,11 +17,8 @@ const normalizeValue = (value, fallback) =>
     ? value.trim().toLowerCase()
     : fallback;
 
-const SUPPORT_WEBHOOK_URL =
-  import.meta.env.VITE_SUPPORT_WEBHOOK_URL ||
-  (import.meta.env.DEV
-    ? "http://localhost:5678/webhook/support-query"
-    : "/api/support-query");
+const SUPPORT_API_URL =
+  import.meta.env.VITE_SUPPORT_API_URL || "/api/support-query";
 
 const getReplyText = (data) => {
   if (typeof data === "string" && data.trim()) {
@@ -91,7 +88,7 @@ const inferSentiment = (data, replyText, escalated) => {
   return "neutral";
 };
 
-const parseWebhookResponse = async (response) => {
+const parseBackendResponse = async (response) => {
   const contentType = response.headers.get("content-type") || "";
 
   if (contentType.includes("application/json")) {
@@ -164,7 +161,7 @@ function Chat({ messages, appendMessage, createTimestamp }) {
         })),
       };
 
-      const response = await fetch(SUPPORT_WEBHOOK_URL, {
+      const response = await fetch(SUPPORT_API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -172,7 +169,7 @@ function Chat({ messages, appendMessage, createTimestamp }) {
         body: JSON.stringify(requestPayload),
       });
 
-      const data = await parseWebhookResponse(response);
+      const data = await parseBackendResponse(response);
 
       if (!response.ok) {
         const details =
